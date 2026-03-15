@@ -1,0 +1,1049 @@
+= IFF-2025 Specification: Interchange File Format for Modern Computing
+Claudio Russo; Dario Russo
+v1.0, 2025
+:doctype: book
+:toc: macro
+:toclevels: 3
+:sectnums:
+:sectnumlevels: 4
+:icons: font
+:source-highlighter: rouge
+:experimental:
+:xrefstyle: short
+:chapter-signifier: Section
+// -- PDF theming attributes --
+:title-page:
+:media: print
+:pdf-theme: default-with-font-fallbacks
+:notitle:
+// -- Document metadata --
+:description: Normative specification for the IFF-2025 binary container format, a modernised evolution of IFF-85.
+:keywords: IFF, IFF-2025, IFF-85, binary format, container format, specification
+:copyright: © 2025 Claudio Russo and Dario Russo — MIT License
+
+ifdef::backend-pdf[]
+<<<
+[.text-center]
+[.big]*IFF-2025 Specification*
+
+[.text-center]
+Interchange File Format for Modern Computing
+
+[.text-center]
+_Version 1.0_
+
+[.text-center]
+Claudio Russo — Dario Russo
+
+[.text-center]
+© 2025 — MIT License
+<<<
+endif::[]
+
+ifndef::backend-pdf[]
+[.lead]
+*IFF-2025 Specification* — Interchange File Format for Modern Computing +
+_Version 1.0_ — Claudio Russo, Dario Russo — © 2025 MIT License
+endif::[]
+
+toc::[]
+
+<<<
+
+== Introduction
+
+IFF-2025 is a data container format offering a flexible and extensible framework for embedding and transporting diverse data structures, such as multimedia content, AI models, archives, and custom formats.
+
+Unlike traditional formats with rigid structures, IFF-2025 prioritises forward compatibility, parsing safety, and adaptability to modern computing environments.
+Its core principle is the use of *self-describing chunks*.
+Each data segment is prefixed with an identifier (_tag_) and a length indicator (_size_), allowing parsers to safely skip unrecognised content without disrupting the overall structure.
+
+Originally created by Electronic Arts (EA) in 1985 for the Amiga platform as Interchange File Format (IFF-85), it focused on multimedia interchange in resource-constrained systems.
+IFF-85 introduced hierarchical nesting, shared properties, and container types, though many advanced features went under-utilised, leading to simplified derivative formats.
+However, constraints like fixed 32-bit signed sizes (limiting data to about 2 GB), mandatory big-endian encoding, and lack of streaming support limited its modern adoption.
+
+IFF-2025 evolves IFF-85 by retaining its foundational concepts while adding enhancements to overcome these limitations.
+Key updates include variable-length tags and sizes, configurable endianness, signed/unsigned integers, progressive (streaming) modes, sharding for fragmented data, and scoped directives for runtime configuration.
+These enable efficient management of large datasets, real-time streaming, and heterogeneous content aggregation, suiting applications in multimedia processing, AI data interchange, archival systems, and distributed computing.
+
+Backward compatibility with IFF-85 is preserved where possible: by default, IFF-2025 follows IFF-85 rules (e.g., 4-byte uppercase ASCII tags, 32-bit big-endian sizes, blobbed mode).
+Deviations occur via explicit directives, allowing legacy parsers to handle compatible subsets without errors.
+This "`power with control`" approach avoids parsing ambiguities or security risks, like buffer overflows, through scoped limits and validation rules.
+
+This specification details the format's structure, core components, parsing models, configuration mechanisms, and implementation guidelines.
+Aimed at developers building parsers, writers, validators, and tools, it includes examples but defers detailed internals (e.g., scope management data structures) to reference implementations.
+The emphasis is on normative rules, behavioural semantics, and interoperability requirements.
+
+
+== Summary of Evolution: From IFF-85 to IFF-2025
+
+This section offers a concise overview of IFF-2025's heritage and advancements for context.
+
+=== IFF-85 Overview
+
+IFF-85 featured fixed 4-byte uppercase ASCII tags, 32-bit big-endian sizes, and even-byte padding for alignment.
+Its primary container types included `FORM` (for typed single chunks), `LIST` (for grouping with shared properties), `CAT{nbsp}` (for concatenating similar items), and `PROP` (for shared properties applicable to subsequent items in `CAT` or `LIST`, but restricted to positions before FORMs).
+
+Reserved tags encompassed `FOR1` through `FOR9`, `CAT1` through `CAT9`, `LIS1` through `LIS9`, and `JJJJ`, with chunk versioning achieved via last-letter overrides (e.g., `CMAP` reserving `CMA1` through `CMA9`).
+Standard `LIST` properties were hardware-specific, such as `OPGM` (original program), `OCPU` (original CPU), `OCMP` (original compiler), `OSN` (original serial number), and `UNAM` (user name).
+
+Applications centred on Amiga multimedia, including ILBM (InterLeaved BitMap images), 8SVX (8-bit sampled voice audio), SMUS (simple music), and professional 3D rendering software.
+
+.IFF-85 Strengths and Limitations
+[cols="1,3",options="header"]
+|===
+|Aspect |Detail
+
+|Strengths
+|Self-describing structure enabling skipping of unknown chunks; hierarchical nesting for complex data organisation.
+
+|Limitations
+|Fixed size constraints hindering scalability; absence of native streaming support; big-endian encoding amid endian debates; risks of uncontrolled deep nesting; reduced portability from hardware-specific properties; inflexible PROP placement.
+|===
+
+
+=== Derivative Formats (e.g., RIFF)
+
+Derivatives like Microsoft's Resource Interchange File Format (RIFF) adopted a little-endian variant, simplifying the structure by eliminating `CAT` and `PROP` containers and enforcing stricter nesting rules.
+RIFF found use in formats such as WAV (audio), AVI (video), and WebP (images).
+These adaptations enhanced simplicity for PC environments but introduced redundancy in large files (e.g., repeated headers), reduced flexibility for heterogeneous or shared data, and created a fragmented legacy through the endian switch.
+
+
+=== IFF-2025 Advancements
+
+IFF-2025 restores IFF-85's flexibility while introducing modern controls.
+It supports variable tags with configurable lengths of 4, 8, or 16 bytes, fully case-sensitive (e.g., `ILBM` ≠ `ilbm`) to enable namespaces and avoid collisions.
+Sizes are variable at 16-bit, 32-bit, or 64-bit integers, configurable as signed/unsigned and big-endian/little-endian.
+
+Operating modes include _blobbed_ (fully sized, default) for static files and _progressive_ (END-terminated) for streaming and append-only scenarios.
+Sharding facilitates data continuation across fragments via the blank-tag directive in shard mode, aiding large or distributed data handling.
+Scoped directives, such as `' IFF'` directives, allow runtime configuration with inheritance and guards for safety.
+
+Previously reserved tags (e.g., `FOR1`–`FOR9`) are now available for custom use, while hardware-specific LIST properties (`OPGM`, `OCPU`, etc.) and versioning via chunk ID overrides are discontinued — versioning is now handled via directives.
+Enhanced `PROP` handling permits multiple PROPs in `LIST` for layered overrides (last-wins semantics); PROPs can appear anywhere in `LIST`, applying to subsequent FORMs or nested containers, with no container nesting within PROPs to maintain flatness.
+
+Validation and safety features enforce container types, scoped limits to prevent overflows, and directive guards against parent constraint violations.
+In summary, IFF-2025 revives IFF-85's elegance, addresses RIFF's rigidity, and equips the format for 2025-era challenges like petabyte-scale archives and real-time AI model streaming.
+
+
+<<<
+
+[[sec-tags-and-sizes]]
+== Fundamental Types: Tags and Sizes
+
+IFF-2025 relies on two primitives for self-description: _tags_ (identifiers) and _sizes_ (length indicators).
+These are configurable via directives but default to IFF-85-compatible settings for interoperability.
+
+
+=== Tags
+
+Tags represent chunk keys and literal keywords for container variants and types.
+They consist of fixed-length byte sequences serving as unique identifiers for chunks or directives, with configurable lengths of 4 bytes (default), 8 bytes, or 16 bytes.
+
+Encoding uses ASCII characters and is case-sensitive.
+Shorter identifiers are padded with spaces (`' '`) to the configured tag length.
+
+Data tags:: Left-aligned and right-padded (e.g., `FORM` becomes `FORM` followed by 4 blank spaces in 8-byte mode).
+Directive tags:: Right-aligned and left-padded (e.g., `' IFF'` becomes 4 blank spaces followed by `' IFF'` in 8-byte mode).
+
+This padding scheme ensures that tags can be reliably compared.
+See <<sec-canonical-forms>> for details on canonical forms.
+
+Tag properties include endian-invariance, as byte order is unaffected by endian switch configurations (tags are read as raw byte sequences, not numeric types).
+Canonical forms are normalised for comparison and hashing to ensure interoperability across lengths (see <<sec-canonical-forms>>).
+Comparisons are lexicographical after canonicalisation, prioritising type then content; hashing (e.g., FNV-1a) operates on the canonical form for dictionaries or stack frames.
+
+
+=== Sizes
+
+Sizes are integers indicating the subsequent data payload length, excluding tag and size fields.
+
+.Size Field Options
+[cols="1,1,1",options="header"]
+|===
+|Length |Width |Default?
+
+|2 bytes |16-bit |No
+|4 bytes |32-bit |Yes (IFF-85)
+|8 bytes |64-bit |No
+|===
+
+Encoding supports big-endian (default) or little-endian, and signed (default) or unsigned.
+
+Maximum values depend on configuration (e.g., 64-bit unsigned supports up to 18 exabytes), though implementations may impose application-specific caps to prevent resource exhaustion.
+Padding provides optional even-byte alignment after data (default: enabled) and is configurable via directives.
+
+It is left to the parser implementation to reject wider types on a narrow host or accept them by simulating the larger types (e.g., 64-bit size support on a 6502 host).
+
+
+<<<
+
+[[sec-containers-and-chunks]]
+== Core Components: Containers and Chunks
+
+IFF-2025 data consists of components categorised as _containers_ (composite structures embedding others) or _chunks_ (atomic units).
+The term "`chunk`" derives from IFF-85 and encompasses both data properties and directives in IFF-2025.
+
+The general chunk structure is `[Tag] [Size] [Byte Data] [Optional Padding]`, where data properties are atomic holders for user-defined data, and directives act as parser control instructions.
+
+The general container structure is `[(Variant) Tag] [Size] [(Type) Tag] [Nested Components] [Optional Padding]`.
+The `[Size]` is required in blobbed mode and absent in progressive mode.
+Containers support nesting, with directives at any level for dynamic configuration.
+In progressive mode, the absence of a size field avoids back-patching, with termination handled via `' END'` directives; parsers detect mode via scope flags and adjust expectations accordingly.
+
+
+=== Chunks in Detail
+
+Chunks form the atomic building blocks, divided into data properties and directives.
+
+
+==== Data Properties
+
+These have a `non-directive tag + Size + Arbitrary byte data + Optional padding`.
+Their purpose is to store metadata, content, or custom payloads (e.g., `BMHD` for bitmap headers, `BODY` for raw pixel or audio data).
+Constraints limit them to `FORM` or `PROP` containers; they are not permitted directly in `LIST` or `CAT`.
+
+
+==== Directives
+
+IFF-85 forbids type IDs with leading spaces before printable characters, hence IFF-2025 directives start with spaces.
+Their structure is `Directive tag + Size + Directive-specific data`.
+
+.Defined Directive Tags
+[cols="1,3",options="header"]
+|===
+|Tag |Purpose
+
+|`' IFF'`
+|Configuration header for scope updates (see <<sec-iff-directive>>).
+
+|`' END'`
+|Container termination in progressive mode. Must have a size of 0.
+
+|`'    '`
+|Filler (padding) or shard (data continuation), depending on structuring flags. The tag consists of all spaces and its length is scope-dependent (4/8/16 bytes).
+
+|`' VER'` / `' REV'`
+|Optional version/revision for a FORM or chunk.
+
+|`' CHK'` / `' SUM'`
+|Delimit a span for integrity checks (e.g., CRC).
+
+|`' REF'`
+|Continuation or inclusion link to an external segment (see <<sec-sharding>>).
+
+|`' DEF'`
+|Segment identity declaration for referenced segments (see <<sec-sharding>>).
+|===
+
+Directives can appear within containers and are evaluated in the current scope, enabling fine-grained control without global side effects.
+
+
+=== Containers in Detail
+
+Containers organise data hierarchically, with a variant tag indicating type, a size field (in blobbed mode only), and a type tag for validation.
+
+.Type Tag Semantics by Container
+[cols="1,3",options="header"]
+|===
+|Container |Type Tag Rules
+
+|`FORM`
+|Must be specific and non-blank (e.g., `ILBM`); blank `'    '` is not permitted, as composition uses nesting.
+
+|`LIST` / `CAT`
+|A blank `'    '` skips type validation for heterogeneous sub-components; a specific tag (e.g., `ILBM`) requires matching sub-FORMs, with validation inherited through nesting.
+
+|`PROP`
+|A blank `'    '` acts as a wildcard, applying properties to any FORM in the enclosing LIST; a specific tag applies only to matching types.
+|===
+
+This ensures type safety for single-unit `FORM` containers while providing flexibility in `LIST`, `CAT`, and `PROP` wildcards, replacing discontinued base LIST properties.
+
+
+==== FORM Container
+
+The structure is `'FORM'` variant tag + [Size (blobbed only)] + Type tag (non-blank) + Sequence of sub-components (data properties, directives, or nested containers: FORM, CAT, LIST).
+It encapsulates typed related data (e.g., an image with headers and body), achieving composition via nesting.
+
+IFF-2025 enhancements include progressive mode for streaming and directives for modifying parsing within the FORM.
+Validation requires a non-blank type tag; parsers reject blanks for `FORM`.
+No direct PROPs are allowed (use `LIST` for shared properties), but it supports heterogeneous trees via nesting.
+
+
+==== CAT Container
+
+The structure is `'CAT '` variant tag + [Size (blobbed only)] + Type tag + Sequence of nested containers (FORM, CAT, LIST) interspersed with directives.
+It concatenates items — heterogeneous with a blank type or homogeneous with a specific type — supporting nesting for complex aggregations.
+
+IFF-2025 enhancements allow directives to intersperse containers for dynamic adjustments (e.g., endianness switches) and LIST nesting for indirect shared properties.
+Validation mandates matching sub-FORMs in strict mode for non-blank types; blanks allow any.
+No direct data properties or PROPs are permitted.
+
+
+==== LIST and PROP Containers
+
+The `LIST` structure is `'LIST'` variant tag + [Size (blobbed only)] + Type tag + Interleaved sequence of PROPs, directives, and nested containers (FORMs, CATs, LISTs).
+Multiple PROPs enable layered overrides (last wins), positionable anywhere to update subsequent components.
+Its purpose is grouping heterogeneous items with phased defaults (e.g., mixed ILBM images and 8SVX audio), with blank types permitting any sub-FORMs.
+No direct data properties are allowed; these must be wrapped in `FORM`.
+Validation requires matching sub-FORMs in strict mode for non-blank types; blanks allow any.
+
+The `PROP` structure is `'PROP'` variant tag + [Size (blobbed only)] + Type tag + Flat sequence of data properties (interspersed with directives).
+Constraints prohibit nested containers, with directives scoped locally.
+Its purpose is defining or updating shared properties for subsequent data in the enclosing `LIST`, with blank types as wildcards for any FORM or specific tags for targeted application.
+In heterogeneous LISTs (blank type), wildcard PROPs set global defaults, while type-specific ones override matches.
+PROPs employ _pull semantics_: decoders request properties explicitly, avoiding unrequested data injection.
+
+.LIST with Interleaved PROPs
+[listing]
+....
++----------------------------------+
+| LIST | [size (blobbed)] |      | // Blank type: heterogeneous
++----------------------------------+
+ +--------------------------------+
+ | PROP | [size (blobbed)] |      |  // Initial wildcard PROP
+ +--------------------------------+
+  +------------------------------+
+  | CMAP | [size] | global palette |
+  +------------------------------+
+ +--------------------------------+
+ | FORM | [size (blobbed)] | ILBM |  // Uses initial PROP
+ +--------------------------------+
+  +------------------------------+
+  | BODY | [size] | [image data]   |
+  +------------------------------+
+ +--------------------------------+
+ | PROP | [size (blobbed)] | ILBM |  // Interleaved override for ILBM
+ +--------------------------------+
+  +------------------------------+
+  | BMHD | [size] | updated header |
+  +------------------------------+
+ +--------------------------------+
+ | FORM | [size (blobbed)] | ILBM |  // Uses updated PROP
+ +--------------------------------+
+  +------------------------------+
+  | BODY | [size] | [image data]   |
+  +------------------------------+
+ +--------------------------------+
+ | FORM | [size (blobbed)] | 8SVX |  // Could access PROP but 8SVX decoder
+ |      |                  |      |  // won't pull it
+ +--------------------------------+
+  +------------------------------+
+  | BODY | [size] | [audio data]   |
+  +------------------------------+
+....
+
+
+<<<
+
+[[sec-scope-management]]
+== Scope Management and Metadata Directives
+
+Scopes manage configuration states and resource limits via a stack or dictionary (non-normative; implementations vary).
+The scope stack is pushed on container entry and popped on exit.
+
+Each scope entry contains configuration flags (from directives), a remaining byte limit (derived from size or inherited from parent), type validation rules (from container type tag), and a shared property map (updated by PROPs).
+Inheritance rules pass parent flags, limits, validation, and maps to children; updates affect only the current scope and descendants.
+
+Guards ensure safety by preventing changes that violate parent constraints (e.g., exceeding parent bytes), with validation enforcing FORM specificity and PROP applicability.
+For PROP-specific scopes, properties merge into the current map with overrides, applying to subsequent LIST components for phased updates.
+No fixed depth limit is specified; parsers should handle reasonable depths and guard against excessive nesting.
+
+Further protection is enabled via metadata controlling directives, allowing an optional fine-grained control over versioned file formats and data integrity.
+
+
+=== `' VER'` and `' REV'`: File Format Version Specifiers
+
+NOTE: Non-normative directive. Can be replaced with a no-op implementation without side-effects.
+
+These directives allow file formats to evolve over time, specifying a version and revision that encoders/decoders must support to parse chunks appropriately.
+Their formats are similar: `[' VER', size, data]` and `[' REV', size, data]`.
+
+As per directive rules, they are not required to be the first element inside a FORM, but that is typically the optimal placement.
+The byte content is expected to follow a data-format-specified content.
+
+Sizes are subject to "`size`" length rules.
+
+
+=== `' CHK'` and `' SUM'`: Span-Based Integrity Checks
+
+NOTE: Non-normative directive. Can be replaced with a no-op implementation without side-effects.
+
+The `' CHK'` and `' SUM'` directives define starting and ending points for data integrity checks.
+Multiple `' CHK'` instances can appear throughout a single file, with matching `' SUM'` assigned in LIFO order.
+`' CHK'` directives are to be tracked individually, so concurrent `' CHK'` points are discouraged to avoid complexity.
+A single `' CHK'` can also be used for multiple algorithms which the parser can then appropriately select, depending on implementation and host architecture.
+
+`' CHK'` has the structure `[' CHK', size, version, num_ids, {id_len, id}]`. +
+`' SUM'` follows `[' SUM', size, version, num_ids, {id_len, id, sum_len, sum}]`.
+
+An unmatched `' CHK'`/`' SUM'` pair constitutes a validation failure.
+Parser implementors may choose to ignore or enforce integrity validation.
+
+Sizes and lengths are subject to "`size`" length rules.
+
+.Defined Checksum Algorithms
+[cols="1,1,1,2",options="header"]
+|===
+|Algorithm |Identifier |Output Size |Use Case
+
+|LRC-ISO-1155
+|`"LRC-ISO-1155"`
+|8 bits
+|Small devices
+
+|RFC-1071
+|`"RFC-1071"`
+|16 bits
+|Lightweight checksums
+
+|CRC-32C
+|`"CRC-32C"`
+|32 bits
+|General purpose
+
+|CRC64-ECMA
+|`"CRC64-ECMA"`
+|64 bits
+|High integrity, large data
+|===
+
+.Checksum Example
+[listing]
+....
+FORM ILBM [size]
+  ' CHK' [size] [1, 1, 7, "CRC-32C"]                  // Start checksum span
+  BODY  [size] [pixels]                               // Data to be checksummed
+  ' SUM' [size] [1, 1, 7, "CRC-32C", 4, 0xA1B2C3D4]   // End span with CRC
+....
+
+
+<<<
+
+[[sec-sharding]]
+== Sharding, Segmentation and Inclusion
+
+IFF-2025 provides three distinct mechanisms for managing distributed or non-linear data streams, enabling the format to function as a resilient and modular data bus.
+
+
+=== Sharding and Filler Directives
+
+The `'    '` directive tag (all spaces, length-dependent, e.g., `'    '` for 4 bytes) operates in two modes:
+
+Filler mode (Structuring Bit 1 = 0, default):: Skipped as padding with no data impact.
+Sharding mode (Structuring Bit 1 = 1):: Appends to the preceding chunk for seamless continuation (e.g., network fragments).
+
+
+=== Segmentation and Continuation
+
+Segmentation allows a single IFF-2025 stream to span across multiple physical files (a.k.a. volumes / segments).
+Splits must occur only at Root Container boundaries.
+Each segment is a self-contained IFF-2025 stream, with the following characteristics:
+
+Leading Handshake:: Each volume must begin with a `global_handshake` (an `' IFF'` or a `' DEF'` directive).
+
+Implicit Handshake (Legacy Fallback):: If a segment lacks an explicit `' IFF'` directive (e.g., a legacy IFF-85 file being expanded), the parser assumes the default IFF-85 configuration as for a standalone file and an identity of its file/resource. This volume can only be treated as a leaf segment.
+
+Explicit Continuation:: To signal that more segments are expected, a volume may end with a trailing `' REF'` directive. Its payload should contain metadata to identify the expected next segment. A parser encountering this at EOF must wait for, or request, the next volume instead of finalising the state.
+
+IMPORTANT: IFF-85 mode mandates a single container at root level. Thus, segments without an explicit `' IFF'` directive must contain exactly one root container.
+
+Given the self-contained nature of each segment, parser flags revert to caller values upon segment completion.
+
+
+=== Inclusion and Resumption
+
+Inclusion enables a non-linear "`Master Manifest`" pattern, where one file can pull data from another without duplicating content.
+This scenario is similar to the previous one, only differing in that the segments can be referenced between each other in a non-linear fashion.
+
+The Include Link:: A `' REF'` directive placed between root containers at global scope functions as an Inclusion Directive. Its payload specifies the external segment to be inserted.
+
+The Return Signal:: When processing an included segment, a global-scope `' END'` directive serves as a Resumption Marker. Upon encountering this `' END'`, the parser stops reading the current fragment and resumes the parent stream at the point immediately following the original Inclusion Link.
+
+
+=== Continuation and Inclusion Directives Payload Format: `' REF'` and `' DEF'`
+
+The directive payload for both continuation and inclusion follows the same schema:
+
+----
+[' REF', directive size, num options, {id size, id data}]
+[' DEF', directive size, num options, {id size, id data}]
+----
+
+The id data format is intentionally not specified.
+As long as the application can provide the resolved segment to the parser, it can be in any format (e.g., a URI, a file path, a network address).
+
+Note that `' DEF'` allows mapping the same segment id to multiple aliases.
+
+Sizes are subject to "`size`" length rules.
+
+
+=== Examples
+
+.Segmentation and Inclusion Example
+[listing]
+....
+; Root segment with explicit data segment references
+ IFF [size] { .. }
+ REF [size] { 1, 4, "0123" }              // Requires data segment 1
+ REF [size] { 1, 5, "2.iff" }             // Requires data segment 2
+ REF [size] { 2, 4, "0123", 5, "2.iff" }  // Requires either data segment 1 or 2
+ REF [size] { 2, 4, "0123", 0 }           // Optionally includes segment 1
+FORM [size] ANIM
+  ...
+END [0]                                   // Explicit segment termination
+
+; data segment 1 identified by "0123"
+ IFF [size] { .. }
+ DEF [size] { 1, 4, "0123" }
+FORM [size] ANIM
+  ...
+
+; data segment 2 from file 2.iff, a vanilla IFF-85 file segment
+FORM [size] ANIM
+  ....
+....
+
+
+<<<
+
+[[sec-parsing-models]]
+== Parsing Models
+
+As a superset of IFF-85, IFF-2025 allows full fallback to legacy mode.
+Files or streams starting with root containers (`CAT`/`LIST`/`FORM`) imply clean IFF-85 parsing.
+See <<sec-parser-bootstrapping>> for details.
+
+IFF-85 mode can activate via directives, at root or locally.
+Once activated, enhancements are unavailable, with effects ending at scope closure if switched mid-container.
+
+
+<<<
+
+[[sec-iff-directive]]
+== Configuration Directive: `' IFF'`
+
+The `' IFF'` directive enables scoped parsing rule modifications for controlled extensibility.
+Its structure is `' IFF'` tag + Size + Version (2 bytes) + Revision (2 bytes) + Flags (8 bytes).
+
+The version field is fixed at 40 (2025 − 1985 = 40).
+The revision field starts at 0 for minor patches.
+Flags form an 8-byte field.
+Defaults match IFF-85 (32-bit big-endian signed sizes, 4-byte tags, blobbed mode, padding enabled).
+Application guards reject changes exceeding parent limits or invalidating states; effects are immediate for subsequent reads but do not alter fixed container type semantics.
+
+.`' IFF'` Directive Layout
+[listing]
+....
++----------+----------+------------+--------+--------------------+
+| ' IFF'   | Size     | Version=40 | Rev=0  | Flags (8 bytes)    |
++----------+----------+------------+--------+--------------------+
+....
+
+
+=== Version Field
+
+This identifies the major specification version, enabling opt-in for features (see <<sec-parsing-models>>).
+
+.Version Enumeration
+[cols="1,3",options="header"]
+|===
+|Value |Meaning
+
+|`0`
+|Legacy IFF-85 mode (enforcing constraints at root, with no further directives).
+
+|`40`
+|IFF-2025 mode (enabling extensions like `' END'` and sharding).
+|===
+
+It is not applicable by default and must be explicitly set.
+IFF-85 parsers reject values greater than 0; IFF-2025 parsers support at least 40, with no further values defined.
+
+
+=== Revision Field
+
+Currently unused.
+
+
+[[sec-flags]]
+=== Flags Byte Array
+
+Bytes 4–11 (8 bytes) form the flags field, organised as one byte per functional group.
+Each byte is an independent enumeration value; some bytes (Typing, Structuring) use bit flags within the byte.
+Defaults match IFF-85, with scoped changes (immediate application, reverting on scope exit; see <<sec-scope-management>>).
+
+The groups are:
+
+* *Sizing (Byte 0)*: Controls size field length, from 16-bit for embedded systems to 64-bit for large data.
+* *Tag Sizing (Byte 1)*: Longer tags reduce namespace collision risks.
+* *Operating (Byte 2)*: Progressive mode requires `' END'` for containers.
+* *Encoding (Byte 3)*: Reserved for compressed payloads.
+* *Typing (Byte 4)*: Unsigned for maximum range; little-endian supported.
+* *Structuring (Byte 5)*: No-padding for compact streams; sharding for lower latency.
+* *Reserved (Bytes 6–7)*: For future use; unused in V40.
+
+.Flags Bit Layout
+[listing]
+....
+Sizing block
+------------
+00000000 : Base IFF 85, 32 bit sizes
+00000001 : 64 bit sizes
+11111111 : 16 bit sizes
+
+Tag Sizing block
+----------------
+00000000 : Base IFF 85 mode, 4 bytes tag sizes
+00000001 : 8 bytes tag sizes
+00000010 : 16 bytes tag sizes
+
+Operating modes block
+---------------------
+00000000 : Base IFF 85, Blobbed mode
+00000001 : Progressive mode
+
+Encoding modes block
+--------------------
+00000000 : Base IFF 85 mode, BASE256 (raw binary)
+
+Typing Flags block (Affecting sizes only)
+-----------------------------------------
+00000000 : Base IFF 85 mode, Big Endian and Signed
+00000001 : Switch to unsigned
+00000010 : Switch to little endian
+
+Structuring Flags block
+-----------------------
+00000000 : Base IFF 85 mode, padding on and blank chunk type skipped
+00000001 : Disable padding byte
+00000010 : Enable sharding via blank chunk type
+00000100 : Enforce CAT/LIST declared type vs contained FORM type validation
+....
+
+
+==== Blobbed Mode Notes
+
+In blobbed mode, all components include explicit sizes; parsing reads the tag, size, then exactly `size` bytes of data or sub-components.
+Validation tracks consumed bytes against the declared size, erroring on overruns or underruns.
+Padding applies post-data for alignment (configurable).
+Use cases focus on static files with known lengths upfront.
+
+
+==== Progressive Mode Notes
+
+In progressive mode, containers lack sizes and terminate via `' END'` directives, with parsers detecting absence based on flags.
+Its purpose is enabling streaming and append-only workflows without precomputing lengths.
+Bounding uses parent scope remaining bytes (root may be unbounded, but parsers can impose caps).
+Validation requires matching `' END'` for open containers, with dynamic type checks as sub-components appear.
+Padding applies post-data (configurable).
+Use cases suit fragmented streams, where shards enable progressive decoding.
+
+
+<<<
+
+[[sec-parser-bootstrapping]]
+== Parser Bootstrapping Notes
+
+For compatibility, parsers bootstrap in _pseudo IFF-85 mode_ (IFF-2025 with extensions off), equivalent to an `' IFF'` directive of `[0x0028][0x0000][0x0000000000000000]`.
+This upgrades to clean IFF-85 `[0x0000][0x0000][0x0000000000000000]` if the first tag is `CAT`/`LIST`/`FORM`.
+
+A root `' IFF'` sets global scope, with blobbed mode imposing file length limits.
+
+
+=== Example Effects
+
+
+==== Clean IFF-85 via IFF Directive
+
+[listing]
+....
+ IFF [size] {[0][0][0]}       // Clean IFF 85 start via explicit switch
+FORM [size] ANIM
+  BMHD [size] [header]
+  CMAP [size] [palette]
+   IFF { .. } <----------------- ERROR, invalid TAG
+  BODY [size] [pixels]
+....
+
+
+==== IFF-85 Compatible Settings via IFF Directive
+
+[listing]
+....
+ IFF [size] {[40][0][0]}      // IFF 85 alike configuration
+FORM [size] ANIM              // Size is setting a boundary. Even switching to
+  BMHD [size] [header]        //  64 bits, this boundary cannot be exceeded
+  CMAP [size] [palette]
+   IFF { .. } <----------------- Further mode switch possible with limitations
+  BODY [size] [pixels]
+....
+
+
+==== Clean IFF-85 via First Tag Rule
+
+[listing]
+....
+FORM [size] ANIM              // First Tag is a FORM, promoting config to IFF 85
+  BMHD [size] [header]
+  CMAP [size] [palette]
+   IFF { .. } <----------------- ERROR, invalid TAG
+  BODY [size] [pixels]
+....
+
+
+==== Temporary IFF-85 Compatible Settings in a Scope
+
+[listing]
+....
+ IFF [size] {[40][0][0]}      // IFF 85 alike configuration
+CAT  [size] ANIM
+  FORM [size] ANIM
+    BMHD [size] [header]
+    CMAP [size] [palette]
+     IFF [size] {[0][0][0]} <--- Locks to IFF 85, no further directives allowed
+    BODY [size] [pixels]
+  FORM [size] ANIM          <--- A new FORM constitutes a new scope. Inheriting
+    BMHD [size] [header]           the parent configuration [40][0][0]
+     IFF [size] {[40][0][0]} <-- Further mode switch possible with limitations
+    CMAP [size] [palette]
+     IFF [size] {[40][0][0]} <-- Further mode switch possible with limitations
+    BODY [size] [pixels]
+....
+
+
+==== Implicit IFF-85 Mode Locking
+
+[listing]
+....
+CAT  [size] ANIM              // First Tag is a CAT, promoting config to IFF 85
+  FORM [size] ANIM          <--- A new FORM constitutes a new scope. Inheriting
+    BMHD [size] [header]           the parent configuration as [0][0][0]
+    CMAP [size] [palette]          still no directives allowed anymore
+    BODY [size] [pixels]
+  FORM [size] ANIM
+    BMHD [size] [header]
+    CMAP [size] [palette]
+    BODY [size] [pixels]
+....
+
+
+<<<
+
+[[sec-diagrams]]
+== Illustrative Diagrams and Examples
+
+This section uses visuals and examples to clarify concepts, reflecting updated type tags and interleaved PROPs.
+
+
+=== Basic Chunk Diagram
+
+[listing]
+....
++------+------+------+
+| TAG  | SIZE | DATA |
++------+------+------+
+....
+
+
+=== Nested FORM Example (Blobbed Mode)
+
+[listing]
+....
+FORM [size] ANIM
+  FORM [size] ILBM
+    BMHD [size] [header]
+    CMAP [size] [palette]
+    BODY [size] [pixels]
+  FORM [size] ILBM
+    BMHD [size] [header]
+    CMAP [size] [palette]
+    BODY [size] [pixels]
+....
+
+NOTE: No blank type for FORM; nesting provides composition.
+
+
+=== Heterogeneous LIST Example (Progressive Mode)
+
+[listing]
+....
+LIST                             // Absent size, type='    ' (heterogeneous)
+  PROP                           // Wildcard, absent size
+    CMAP [size] [shared palette]
+  ' END' [0]                     // PROP end
+  FORM ILBM                      // Absent size
+    BODY [size] [image]
+  ' END' [0]                     // FORM end
+  FORM ACBM                      // Absent size
+    BODY [size] [alt image]
+  ' END' [0]                     // FORM end
+  FORM 8SVX                      // Absent size
+    VHDR [size] [header]
+    BODY [size] [audio]
+  ' END' [0]                     // FORM end
+' END' [0]                       // LIST end
+....
+
+NOTE: Wildcard PROP applies to all subsequent FORMs.
+
+
+=== Typed CAT Example (Blobbed Mode)
+
+[listing]
+....
+CAT [size] ILBM
+  FORM [size] ILBM
+    BODY [size] [frame1]
+  FORM [size] ILBM
+    BODY [size] [frame2]
+....
+
+NOTE: Non-blank type enforces matching.
+
+
+=== Progressive LIST with Interleaved PROPs
+
+[listing]
+....
+LIST                     // Absent size, blank type
+  PROP                   // Initial wildcard, absent size
+    CMAP [size] [global palette]
+  ' END' [0]             // PROP end
+  FORM ILBM              // Absent size, uses initial PROP for CMAP
+    BODY [size] [data]
+  ' END' [0]             // FORM end
+  PROP ILBM              // Interleaved update, absent size
+    BMHD [size] [ILBM-specific override]
+  ' END' [0]             // PROP end
+  FORM ILBM              // Absent size, uses updated PROP for BMHD
+    BODY [size] [data]
+  ' END' [0]             // FORM end
+  FORM 8SVX              // Absent size, sees CMAP, BMHD decoder won't pull them
+    BODY [size] [data]
+  ' END' [0]             // FORM end
+' END' [0]               // LIST end
+....
+
+
+=== Sharded Chunk Example
+
+[listing]
+....
+BODY [size1] [part1]
+'    ' [size2] [part2]
+'    ' [size3] [part3]
+....
+
+
+=== Directive in PROP (Progressive Mode)
+
+[listing]
+....
+PROP ILBM   // Absent size
+  BMHD [size] [big-endian header]
+  ' IFF' [size] [switch to little-endian]
+  CMAP [LE size] [data endianness is ILBM-format-defined, not IFF-controlled]
+' END' [0]
+....
+
+
+=== Roaming Directive in CAT (Progressive Mode)
+
+[listing]
+....
+CAT           // Absent size, blank type
+  ' IFF' [size] [little-endian]
+  FORM ILBM   // Absent size
+    BODY [LE size] [data endian unaffected]
+  ' END' [0]
+  FORM 8SVX   // Absent size
+    BODY [LE size] [data endian unaffected]
+  ' END' [0]
+' END' [0]
+....
+
+
+=== Progressive Streaming with Sharding
+
+*Use Case*: Fragmented live video stream.
+
+[listing]
+....
+CAT  VDEO           // Absent size, specific type
+  ' IFF' [size] [progressive + sharding + 64-bit]
+  FORM  FRME        // Absent size
+     VHDR  [size1] [part1]
+    '    ' [size2] [part2]
+     BODY  [size3] [pixels1]
+    '    ' [size4] [pixels2]
+    '    ' [size5] [pixels3]
+  ' END' [0]
+  FORM  FRME        // Absent size
+    {next frame}
+  ' END' [0]
+' END' [0]
+....
+
+
+<<<
+
+[[sec-canonical-forms]]
+== Canonical Forms for Tags
+
+For interoperability across tag lengths, IFF-2025 defines normalisation rules.
+Parsers convert tags to a standardised form based on the maximum supported length, using padding to align content.
+
+
+=== Normalisation Rules
+
+Data tags are left-aligned and right-padded with spaces (disallowing leading spaces).
+Directive tags are right-aligned and left-padded with spaces (preserving leading spaces).
+The process pads to the maximum supported length.
+Comparisons always use the canonical form for matching and hashing, including for blank `'    '` (all spaces).
+
+
+=== Padding and Normalisation Examples
+
+[listing]
+....
+4-byte Tags:
+Data:     [FORM]
+Directive:[ IFF]
+
+8-byte Tags:
+Data:     [FORM    ]
+Directive:[     IFF]
+
+16-byte Tags:
+Data:     [FORM            ]
+Directive:[             IFF]
+....
+
+*Benefits*: Enables 16-byte parsers to read 4-byte files seamlessly, simplifies internal storage (e.g., single hash key per semantic), and maintains distinction between data and directive types, including blank wildcards.
+
+
+<<<
+
+[appendix]
+== Credits and Contributions
+
+This specification extends IFF-85.
+
+.IFF-85 Team (per the original Section 7)
+* Bob "`Kodiak`" Burns, Commodore-Amiga
+* R. J. Mical, Commodore-Amiga
+* Jerry Morrison, Electronic Arts (https://github.com/1fish2[@1fish2])
+* Greg Riker, Electronic Arts
+* Steve Shaw, Electronic Arts
+* Barry Walsh, Commodore-Amiga
+* October 1988 revision by Bryce Nesbitt and Carolyn Scheppner, Commodore-Amiga.
+
+.IFF-2025 Contributors
+* Claudio Russo
+* Dario Russo
+
+
+[appendix]
+[[app-ebnf]]
+== Extended Backus-Naur Form (EBNF) Grammar
+
+[source,ebnf]
+----
+; --- Top Level Structure ---
+iff_file         = (adaptive_segment)+
+
+; A segment is either local root data or a link to external data
+adaptive_segment = (global_handshake+ (root_container | directive)*)+
+                   [volume_signal]
+
+; --- Handshakes & Logic ---
+; Global Handshake: Re-declares 'alphabet' or establishes continuation
+; May be implicit for legacy IFF-85 segments
+global_handshake = iff_directive | def_directive
+
+; Volume Signal: Handles clean stops, continuations, or 'return'
+volume_signal    = end_directive | continuation_marker
+
+; Continuation: A trailing shard acts as a "To Be Continued" pointer
+continuation_marker = ref_directive
+
+; --- Containers ---
+; Root containers are whole; they are not volume-split.
+root_container   = form | cat | list
+
+; CONTAINERS (size present in blobbed, absent in progressive)
+form             = "FORM" [size] form_type_tag form_content [end_directive]
+cat              = "CAT " [size] container_type_tag cat_content [end_directive]
+list             = "LIST" [size] container_type_tag list_content [end_directive]
+prop             = "PROP" [size] prop_type_tag prop_content [end_directive]
+
+; CONTAINER CONTENT (allows roaming directives)
+form_content     = (directive | data_property | nested_container)*
+cat_content      = (directive | nested_container)*
+list_content     = (directive | prop | nested_container)*
+prop_content     = (directive | data_property)*
+
+; Nested containers (recursive, no 'prop' to stop direct nesting in FORM/CAT)
+nested_container = form | cat | list
+data_property    = tag size data padding?
+
+; --- Directives ---
+directive        = iff_directive | ref_directive | def_directive | end_directive
+                 | ver_directive | rev_directive | chk_directive | sum_directive
+                 | other_directive
+
+iff_directive    = " IFF" size version_word revision_word flags_8bytes
+ref_directive    = " REF" size ref_payload
+def_directive    = " DEF" size ref_payload
+end_directive    = " END" size(0)
+ver_directive    = " VER" size directive_data
+rev_directive    = " REV" size directive_data
+chk_directive    = " CHK" size directive_data
+sum_directive    = " SUM" size directive_data
+other_directive  = directive_tag size directive_data
+
+directive_tag    = " " <any ASCII padded to tag length>
+                 ; Any tag with a leading space not matching a named directive
+----
+
+
+[appendix]
+== References
+
+Electronic Arts IFF-85 Standard for Interchange Format Files::
+The original 1985 specification that forms the basis of IFF-2025. +
+_Amiga ROM Kernel Reference Manual: Devices (3rd ed.)_, Appendix C. +
+http://amigadev.elowar.com/read/ADCD_2.1/Devices_Manual_guide/node0042.html
+
+LRC-ISO-1155::
+ISO 1155:1978, "`Information processing — Use of longitudinal parity to detect errors in information messages`". +
+https://www.iso.org/standard/5733.html
+
+RFC-1071::
+IETF RFC 1071, "`Computing the Internet Checksum`". +
+https://www.rfc-editor.org/rfc/rfc1071.html
+
+CRC-32C (Castagnoli)::
+IETF RFC 3720, "`Internet Small Computer Systems Interface (iSCSI)`". +
+https://www.rfc-editor.org/rfc/rfc3720.html
+
+CRC-64-ECMA::
+ECMA-182, "`Data Interchange on 130 mm Optical Data Disks`". +
+https://www.ecma-international.org/publications-and-standards/standards/ecma-182/
+
+
+<<<
+
+[appendix]
+== MIT License
+
+Copyright (c) 2025 Claudio Russo and Dario Russo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "`Software`"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "`AS IS`", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
