@@ -274,6 +274,21 @@ A12. Flag Combination Stress
 | R108 | flags_all_defaults_explicit | ' IFF' with every flag field explicitly set to its default (0). Identical behavior to IFF-85. `iff85_locked == 0`. |
 
 
+A13. Container Entity Routing
+-------------------------------
+
+| #  | Test | Description |
+|----|------|-------------|
+| R109 | cat_entity_delivery | FORM AAAA with CAT BBBB containing 3 FORMs. All 3 entities delivered to AAAA's `process_nested_form`. `enter_container`/`leave_container` bracket the group. |
+| R110 | two_cats_group_boundaries | FORM AAAA with CAT BBBB (2 FORMs) + CAT CCCC (1 FORM). Event log shows two distinct groups with correct type tags. |
+| R111 | consecutive_same_type_cats | Two consecutive CAT BBBB inside FORM AAAA. Two distinct `enter_container`/`leave_container` pairs in event log — groups are distinguishable. |
+| R112 | list_cat_nested_delivery | FORM AAAA > LIST XXXX > CAT BBBB > 2 FORMs. Entities bubble through both intermediate levels to AAAA. Nesting depth tracked (LIST=1, CAT=2). |
+| R113 | root_cat_entity_delivery | Root-level CAT BBBB with 2 FORMs (no parent FORM). Entities go to `session->final_entity`. No crash, no container events dispatched. |
+| R114 | root_list_cat_entity_delivery | Root-level LIST > CAT > FORM (no parent FORM). Entity goes to `session->final_entity`. Multi-level root containers handled safely. |
+| R115 | direct_nested_form_regression | Direct FORM-in-FORM (no CAT/LIST intermediary). Entity delivered to parent's `process_nested_form` without container events. Regression test for existing behavior. |
+| R116 | list_entity_delivery | FORM AAAA with LIST BBBB containing 2 FORMs. Entities bubble to AAAA. `enter_container`/`leave_container` events fire for the LIST. |
+
+
 Part B: Write Path (Generator)
 ================================
 
@@ -521,6 +536,14 @@ B16. Bytes Written Tracking
 | W102 | bytes_written_nested | Nested FORM's bytes contribute to parent scope's bytes_written on EndForm. |
 
 
+B17. Container Group Encoding
+-------------------------------
+
+| #  | Test | Description |
+|----|------|-------------|
+| W103 | roundtrip_container_groups | Generate FORM AAAA with CAT BBBB (2 FORMs) + CAT CCCC (1 FORM) via `begin_container_group`/`produce_grouped_form` FormEncoder callbacks. Parse back with ContainerAwareFormDecoder. Verify 3 entities, 7 events (ENTER BBBB, entity, entity, LEAVE BBBB, ENTER CCCC, entity, LEAVE CCCC). |
+
+
 Appendix: Original Test Mapping
 =================================
 
@@ -562,9 +585,9 @@ Appendix: Summary Statistics
 
 | Path       | Conformance Points | Test Functions | Multi-coverage |
 |------------|--------------------|----------------|----------------|
-| Read (R)   | 108                | 103            | 5 (R28,R30,R31,R52,R77) |
-| Write (W)  | 102                | 98             | 4 (W47,W73,W86,W87) |
-| **Total**  | **210**            | **201**        | **9** |
+| Read (R)   | 116                | 111            | 5 (R28,R30,R31,R52,R77) |
+| Write (W)  | 103                | 99             | 4 (W47,W73,W86,W87) |
+| **Total**  | **219**            | **210**        | **9** |
 
-201 unique test functions verify 210 conformance points.
+210 unique test functions verify 219 conformance points.
 9 points share a test function with another point (multi-coverage).
