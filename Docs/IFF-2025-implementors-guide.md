@@ -76,6 +76,10 @@ mode (0x0028, calculated as 2025 - 1985).
 
 The 8-byte flags field is organized as one byte per functional group.
 Each byte is an independent enumeration value, not a traditional bitfield.
+Byte 0 is the first on the wire: read or written as one big-endian 64-bit
+value, Byte 0 is its most significant byte. An implementation that keeps the
+flags in a C bitfield must not write the bitfield's integer as it lies: its
+layout is the compiler's (gcc puts the first field in the low bits).
 
 ```
 Byte  Group          Default  Description

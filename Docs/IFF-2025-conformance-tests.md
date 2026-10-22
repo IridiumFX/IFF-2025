@@ -319,7 +319,7 @@ B2. WriteHeader
 | W6 | header_at_root | WriteHeader at root level. Succeeds. Output contains ' IFF' tag, size=12, version, revision, flags. |
 | W7 | header_inside_container_fails | BeginForm then WriteHeader. WriteHeader fails (not at root level). |
 | W8 | header_updates_generator_flags | WriteHeader with progressive flags. Generator's internal flags updated. Subsequent BeginForm uses progressive mode. |
-| W9 | header_binary_layout | WriteHeader byte-for-byte: ' IFF'(4 bytes) + size(4 bytes BE, value 12) + version(2 BE) + revision(2 BE) + flags(8 BE). Compare against TestBuilder. |
+| W9 | header_binary_layout | WriteHeader byte-for-byte: ' IFF'(4 bytes) + size(4 bytes BE, value 12) + version(2 BE) + revision(2 BE) + flags(8 BE: Byte 0, Sizing, first). Compare against TestBuilder. |
 | W10 | header_always_iff85_config | WriteHeader itself is always written using IFF-85 config (4-byte tags, 32-bit BE sizes), regardless of generator flags. Verify via byte layout. |
 
 

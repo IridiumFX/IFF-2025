@@ -529,7 +529,7 @@ Its structure is `' IFF'` tag + Size + Version (2 bytes) + Revision (2 bytes) + 
 
 The version field is fixed at 40 (2025 − 1985 = 40).
 The revision field starts at 0 for minor patches.
-Flags form an 8-byte field.
+Flags form an 8-byte field, one big-endian 64-bit value whose most significant byte is Byte 0 (Section 8.3).
 Defaults match IFF-85 (32-bit big-endian signed sizes, 4-byte tags, blobbed mode, padding enabled).
 Application guards reject changes exceeding parent limits or invalidating states; effects are immediate for subsequent reads but do not alter fixed container type semantics.
 
@@ -571,6 +571,7 @@ Currently unused.
 === Flags Byte Array
 
 Bytes 4–11 (8 bytes) form the flags field, organised as one byte per functional group.
+Byte 0 is the first on the wire: read or written as one big-endian 64-bit value, Byte 0 is its most significant byte, so the array and the value are the same eight bytes.
 Each byte is an independent enumeration value; some bytes (Typing, Structuring) use bit flags within the byte.
 Defaults match IFF-85, with scoped changes (immediate application, reverting on scope exit; see <<sec-scope-management>>).
 
